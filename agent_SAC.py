@@ -72,6 +72,11 @@ class SAC(object):
         self.continue_training = continue_training
         self.load_path = 'alg/sac_20200621-025506'
 
+        torch.manual_seed(args.seed)
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        env.seed(args.seed)
+
         self.lr = 0.0005
         self.gamma = 0.9
         self.tau = 0.003
@@ -198,44 +203,29 @@ class SAC(object):
             bs_idx = self.shared_act # building state index
             for building in range(0,len(self.act_size)):
                 bs_end_idx = bs_idx + self.obs_size[building] - self.shared_act
-                # print("\nBuilding {}".format(building+1))
                 # Boundary constraint flags, -1 for 0, 1 for 1, 0 for anything in between
                 soc_flags = [0 for actsiz in range(self.act_size[building])]
                 #print("States:")
                 # Find constraints and set flags
                 for idx, b_idx in enumerate(range(bs_end_idx-self.act_size[building],bs_end_idx)):
                     
-                    # print("Act size {}".format(self.act_size[building]))
-                    # print("Act: {}".format(state_copy[b_idx]))
-                    # print("Idx: {}".format(b_idx))
-
                     # Enable the SOC flag on extreme values
                     if state_copy[b_idx] < 0.01:
-                        # print(" -1: {}".format(state_copy[b_idx]))
                         soc_flags[idx] = -1
                     elif state_copy[b_idx] > 0.99:
-                        # print(" 1: {}".format(state_copy[b_idx]))
                         soc_flags[idx] = 1
 
                 # Set constraints from flags
                 for idx, flag in enumerate(soc_flags):
-                    
-                    #print("Action: {}".format(action[ba_idx+idx]))
-
                     # SOC is trying to go below 0
                     if flag == -1:
                         if action[ba_idx+idx] < 0:
-                            # print("Activated flag {} == -1".format(idx))
-                            # action[ba_idx+idx] = np.random.normal(0,0.1,1)
                             action[ba_idx+idx] = 0
 
                     # SOC is trying to go above 1
                     elif flag == 1:
                         if action[ba_idx+idx] > 0:
-                            # print("Activated flag {} == 1".format(idx))
-                            # action[ba_idx+idx] = -np.random.normal(0,0.1,1)
                             action[ba_idx+idx] = 0
-                    #print(action[ba_idx+idx])
                 ba_idx += self.act_size[building]
                 bs_idx = bs_end_idx
 
@@ -271,7 +261,6 @@ class SAC(object):
             states = np.append(states, self.autoregressive_memory.buffer[-j-1])
         for j in range(0,self.autoregressive_size-1):
             next_states = np.append(next_states, self.autoregressive_memory.buffer[-j-1])
-        #next_states = np.append(next_states,HVAC_load)
         
         # Smooth action reward function
         smooth_action = abs(actions).sum()

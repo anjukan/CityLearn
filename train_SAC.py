@@ -15,6 +15,7 @@ Project for CityLearn Competition
 # Import Packages
 import argparse
 import numpy as np
+import random
 import itertools
 import torch
 from agent_SAC import SAC, RBC_Agent
@@ -106,6 +107,7 @@ print("Logging to {}\n".format(parent_dir+'tensorboard/'))
 
 # Set seeds (TO DO: CHECK PERFORMANCE SAME FOR TWO RUNS WITH SAME SEED)
 torch.manual_seed(args.seed)
+random.seed(args.seed)
 np.random.seed(args.seed)
 env.seed(args.seed)
 
@@ -157,10 +159,14 @@ The agent training process involves the following:
 total_numsteps = 0
 updates = 0
 
-best_reward = 0.95
+best_reward = 1.2
 
 # Measure the time taken for training
 start_timer = time.time()
+
+# The list of scores and rewards
+score_list = []
+reward_list = []
 
 for i_episode in itertools.count(1):
     # Initialise episode rewards
@@ -198,18 +204,10 @@ for i_episode in itertools.count(1):
                 writer.add_scalar('entropy_temprature/alpha', alpha, total_numsteps)
         
         # Step
-        next_state, reward, done, _ = env.step(action) 
-
-        # Net Energy Consumption
-        #this_netRBC = env.net_electric_consumption_no_storage[episode_steps]
-        #this_netSAC = env.net_electric_consumption[episode_steps]
-        #reward = (this_netRBC * (1 - this_netSAC/RBC_24h_peak[episode_steps%24]))
-        # print(reward)
+        next_state, reward, done, _ = env.step(action)
 
         # Append transition to memory
-        reward, r_peak, r_day, r_night, r_smooth = agent.add_to_buffer(state, action, reward, next_state, done) 
-
-        # writer.add_scalars('RBC vs SAC/Net Energy Consumption', {'RBC':this_netRBC, 'SAC':this_netSAC}, total_numsteps)
+        reward, r_peak, r_day, r_night, r_smooth = agent.add_to_buffer(state, action, reward, next_state, done)
 
         episode_steps += 1
         total_numsteps += 1
@@ -220,8 +218,6 @@ for i_episode in itertools.count(1):
         episode_smooth_reward += r_smooth
 
         state = next_state
-        #if total_numsteps == 24:
-        #    sys.exit()
 
     # Tensorboard log reward values
     writer.add_scalar('Reward/Total', episode_reward, total_numsteps)
@@ -237,6 +233,10 @@ for i_episode in itertools.count(1):
     writer.add_scalar("Scores/peak_demand", env.cost()['peak_demand'], total_numsteps)
     writer.add_scalar("Scores/net_electricity_consumption", env.cost()['net_electricity_consumption'], total_numsteps)
     writer.add_scalar("Scores/total", env.cost()['total'], total_numsteps)
+
+    # Append the total score/reward to the list
+    score_list.append(env.cost()['total'])
+    reward_list.append(episode_reward)
 
     # Log how much storage is utilised by calculating abs sum of actions (CHECK IF WORKS WITH MULTIPLE BUILDINGS!!!)
     episode_actions = np.array(agent.action_tracker[-8759:])
@@ -271,6 +271,18 @@ STEP 5: POSTPROCESSING
 
 # Building to plot results for
 building_number = building_ids[0]
+
+# Save the score list to a file using pickle
+os.makedirs(f'{parent_dir}scores/', exist_ok=True)
+with open(f'{parent_dir}scores/{args.seed}.npy', 'wb') as f:
+    np_score = np.array(score_list)
+    np.save(f, np_score)
+
+# Save the score list to a file using pickle
+os.makedirs(f'{parent_dir}rewards/', exist_ok=True)
+with open(f'{parent_dir}rewards/{args.seed}.npy', 'wb') as f:
+    np_reward = np.array(reward_list)
+    np.save(f, np_reward)
 
 # Plot District level power consumption
 graph_total(env=env, RBC_env = RBC_env, agent=agent, parent_dir=final_dir, start_date = '2017-09-01', end_date = '2017-09-10')
