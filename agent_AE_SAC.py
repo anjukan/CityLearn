@@ -43,7 +43,7 @@ Initialises an Agent and Critic for each building. Can also be used to test/run 
 ======
 '''
 class SAC(object):
-    def __init__(self, env, num_inputs, action_space, args, constrain_action_space=False, smooth_action_space = False, evaluate = False, continue_training = True):
+    def __init__(self, env, num_inputs, action_space, args, constrain_action_space=False, smooth_action_space = False, evaluate = False, continue_training = False):
 
         self.env = env
 
@@ -72,20 +72,17 @@ class SAC(object):
         self.continue_training = continue_training
         self.load_path = 'alg/sac_20200621-025506'
 
-        torch.manual_seed(args.seed)
-        random.seed(args.seed)
-        np.random.seed(args.seed)
-        env.seed(args.seed)
-
-        self.lr = 0.0005
+        self.lr = 0.0001
         self.gamma = 0.9
         self.tau = 0.003
         self.alpha = 0.2
         self.replay_size = 2000000
-        self.batch_size = 1024
+        self.batch_size = 64
         self.automatic_entropy_tuning = False
         self.target_update_interval = 1
         self.hidden_size = 256
+        self.policy_type = "Gaussian"
+        self.update_interval = 168
         
         # Number of regressive terms to include of HVAC cooling load
         self.autoregressive_size = 0
@@ -96,10 +93,6 @@ class SAC(object):
         self.action_factor = 0
         self.smooth_factor = 0
         self.peak_factor = 1
-
-        self.policy_type = "Gaussian"
-
-        self.update_interval = 168
 
         # Use CUDA if available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -176,6 +169,19 @@ class SAC(object):
         if self.continue_training == True:
             self.load_model(self.load_path+"/monitor/checkpoints/sac_actor", self.load_path+"/monitor/checkpoints/sac_critic")
 
+        # Charge Values
+        self.night_reward = []
+        self.night_pen = []
+        self.day_pen = []
+        self.overall = []
+
+        # Reward weights
+        self.rw1 = 0.0008
+        self.rw2 = 0.0008
+
+        # Internal RBC agent
+        self.rbc = RBC_Agent(actions_spaces=env.get_state_action_spaces()[1])
+
     def reset_action_tracker(self):
         self.action_tracker = []
 
@@ -183,6 +189,8 @@ class SAC(object):
         self.reward_tracker = []
 
     def select_action(self, state):
+
+        # state_rbc = state
 
         # Create modified state space with autoregressive terms
         for j in range(0,self.autoregressive_size):
@@ -197,35 +205,67 @@ class SAC(object):
         
         action = action.detach().cpu().numpy()[0]
 
+        # print("SAC action: ", action)
+
+        # actionRBC = self.rbc.select_action(states=state_rbc)
+        # actionRBC = [j for i in actionRBC for j in i] 
+
+        # print("RBC action: ", actionRBC)
+
+        # print("SAC + RBC: ", action + actionRBC)
+
+        # print("SAC + RBC /2: ", (action + actionRBC)/2)
+
+        # assert(False)
+
+        # action = (action + actionRBC)/2
+
+        # action = actionRBC
+
         # Constrain action space to feasible values only if set to True
         if self.constrain_action_space == True:
             ba_idx = 0 # building action index
             bs_idx = self.shared_act # building state index
             for building in range(0,len(self.act_size)):
                 bs_end_idx = bs_idx + self.obs_size[building] - self.shared_act
+                # print("\nBuilding {}".format(building+1))
                 # Boundary constraint flags, -1 for 0, 1 for 1, 0 for anything in between
                 soc_flags = [0 for actsiz in range(self.act_size[building])]
                 #print("States:")
                 # Find constraints and set flags
                 for idx, b_idx in enumerate(range(bs_end_idx-self.act_size[building],bs_end_idx)):
                     
+                    # print("Act size {}".format(self.act_size[building]))
+                    # print("Act: {}".format(state_copy[b_idx]))
+                    # print("Idx: {}".format(b_idx))
+
                     # Enable the SOC flag on extreme values
                     if state_copy[b_idx] < 0.01:
+                        # print(" -1: {}".format(state_copy[b_idx]))
                         soc_flags[idx] = -1
                     elif state_copy[b_idx] > 0.99:
+                        # print(" 1: {}".format(state_copy[b_idx]))
                         soc_flags[idx] = 1
 
                 # Set constraints from flags
                 for idx, flag in enumerate(soc_flags):
+                    
+                    #print("Action: {}".format(action[ba_idx+idx]))
+
                     # SOC is trying to go below 0
                     if flag == -1:
                         if action[ba_idx+idx] < 0:
+                            # print("Activated flag {} == -1".format(idx))
+                            # action[ba_idx+idx] = np.random.normal(0,0.1,1)
                             action[ba_idx+idx] = 0
 
                     # SOC is trying to go above 1
                     elif flag == 1:
                         if action[ba_idx+idx] > 0:
+                            # print("Activated flag {} == 1".format(idx))
+                            # action[ba_idx+idx] = -np.random.normal(0,0.1,1)
                             action[ba_idx+idx] = 0
+                    #print(action[ba_idx+idx])
                 ba_idx += self.act_size[building]
                 bs_idx = bs_end_idx
 
@@ -261,9 +301,14 @@ class SAC(object):
             states = np.append(states, self.autoregressive_memory.buffer[-j-1])
         for j in range(0,self.autoregressive_size-1):
             next_states = np.append(next_states, self.autoregressive_memory.buffer[-j-1])
+        #next_states = np.append(next_states,HVAC_load)
         
         # Smooth action reward function
         smooth_action = abs(actions).sum()
+
+        # rewards = np.clip(rewards/100, -1, 1)
+
+        night_charging_boost, day_charging_pen = 0, 0
 
         # Reward bonus if agent charges during the night
         if (1 <= states[2] < 12 or 22 <= states[2] <= 24) and actions.mean() > 0.1:
@@ -279,7 +324,82 @@ class SAC(object):
         else:
             day_charging_pen = 0
         
+        # penalise = 0
+
+        # if len(self.env.net_electric_consumption) > 1:
+        #     grad = self.env.net_electric_consumption[-1]/self.env.net_electric_consumption[-2]
+        #     if grad > 1.18:
+        #         penalise = 1
+        #     elif grad < 0.97:
+        #         penalise = -1
+        #     elif grad > 1.13:
+        #         penalise = -1
+
+        # penalise = 0
+
+        peaks_term = self.rw1 * (self.env.net_electric_consumption[-1]**2)
+        ramping_term = len(self.building) * self.rw2 * (abs(self.env.net_electric_consumption[-2] - self.env.net_electric_consumption[-1]) 
+                                                        if len(self.env.net_electric_consumption) > 1 else 1)
+
+        rfnc1 = peaks_term + ramping_term
+
+        # mean = sum(self.env.net_electric_consumption)/len(self.env.net_electric_consumption)
+
+        # if self.env.net_electric_consumption[-1] * 1.2 > mean:
+        #     penalise += -1
+        # elif self.env.net_electric_consumption[-1] * 1.2 < mean:
+        #     penalise += 1
+        # else:
+        #     penalise += 0
+
+        # if self.env.net_electric_consumption[-1] < self.env.net_electric_consumption_no_storage[-1]:
+        #     penalise += 1
+        # else:
+        #     penalise += -1
+
+        
+
+        # if len(self.env.net_electric_consumption) > 2:
+        #     if self.env.net_electric_consumption[-1]/self.env.net_electric_consumption[-2] > self.env.net_electric_consumption[-2]/self.env.net_electric_consumption[-3]:
+        #         penalise = -1
+        #     else:
+        #         penalise = 1
+        # else:
+        #     penalise = -2
+
+        # grad = self.env.net_electric_consumption[-1]/self.env.net_electric_consumption[-2] if len(self.env.net_electric_consumption) > 1 else 1
+        # penalise = 0
+        # if grad > 1:
+        #     if actions.mean() > 0.1:
+        #         penalise = -1
+        #     if actions.mean() < -0.1:
+        #         penalise = 1
+
+        # elif grad < 1:
+        #     if actions.mean() > 0.1:
+        #         penalise = 1
+        #     if actions.mean() < -0.1:
+        #         penalise = -1
+
+        # print(grad)
+        # penalise = -1 * grad if grad > 1.2 or grad < 0.8 else 1 * (1 - grad)
+        # penalise /= 10
+
+        # print(self.env.buildings)
+        # for key, building in self.env.buildings.items():
+        #     print(key, ":", building.get_cooling_electric_demand())
+
+        # buildings = self.env.buildings.values()
+        # total = sum([x.get_cooling_electric_demand() for x in buildings]) + sum([x.get_dhw_electric_demand() for x in buildings])
+        # print("Total:", total, "Env:", self.env.net_electric_consumption[-1])
+        # print("Len Env:", len(self.env.net_electric_consumption))
+        # assert(False)
+
         # Apply reward shaping function
+        # total_rewards = rfnc1
+        # total_rewards = self.peak_factor*rewards + penalise
+        # total_rewards = penalise
+        # total_rewards = self.peak_factor*rewards
         total_rewards = self.peak_factor*rewards + night_charging_boost + day_charging_pen
 
         # Scale and clip rewards 
@@ -287,7 +407,7 @@ class SAC(object):
             norm_rewards = np.clip(total_rewards/100, -1, 1)
         else:
             norm_rewards = np.clip(total_rewards/1000, -1, 1)
-
+        # norm_rewards = total_rewards
         # Save experience / reward
         self.memory.push(states, actions, norm_rewards, next_states, dones)
         
@@ -300,7 +420,8 @@ class SAC(object):
         self.reward_tracker.append(norm_rewards)
 
         # Return shaped reward values
-        return norm_rewards, self.peak_factor*rewards, day_charging_pen, night_charging_boost, -self.smooth_factor*smooth_action
+        return norm_rewards, self.peak_factor*rewards, 0, 0, -self.smooth_factor*smooth_action
+        # return norm_rewards, self.peak_factor*rewards, day_charging_pen, night_charging_boost, -self.smooth_factor*smooth_action
 
     # Update policy parameters
     def update_parameters(self, updates):

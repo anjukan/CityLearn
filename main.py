@@ -11,6 +11,7 @@ from csv import DictWriter
 import json
 from pathlib import Path
 import time
+import os
 
 from citylearn import  CityLearn
 
@@ -40,8 +41,32 @@ observations_spaces, actions_spaces = env.get_state_action_spaces()
 # Provides information on Building type, Climate Zone, Annual DHW demand, Annual Cooling Demand, Annual Electricity Demand, Solar Capacity, and correllations among buildings
 building_info = env.get_building_information()
 
+# Store the weights and scores in a new directory
+parent_dir = "alg/sac_{}/".format(time.strftime("%Y%m%d-%H%M%S")) # apprends the timedate
+os.makedirs(parent_dir, exist_ok=True)
+
+# Create the final dir
+final_dir = parent_dir+"final/"
+os.makedirs(final_dir, exist_ok=True)
 
 # In[ ]:
+# Simulate a year of RBC actions
+RBC_env = CityLearn(data_path, building_attributes, weather_file, solar_profile, building_ids, buildings_states_actions = building_state_actions, cost_function = objective_function, central_agent = False, verbose = 0)
+observations_spacesRBC, actions_spacesRBC = RBC_env.get_state_action_spaces()
+agent = RBC_Agent(actions_spacesRBC)
+state = RBC_env.reset()
+state_list = []
+action_list = []
+doneRBC = False
+while not doneRBC:
+    action = agent.select_action([list(RBC_env.buildings.values())[0].sim_results['hour'][RBC_env.time_step]])
+    action_list.append(action)
+    state_list.append(state)
+    next_stateRBC, rewardsRBC, doneRBC, _ = RBC_env.step(action)
+    state = next_stateRBC
+RBC_action_base = np.array(action_list)
+RBC_state_base = np.array(state_list)
+RBC_24h_peak = [day.max() for day in np.append(RBC_env.net_electric_consumption,0).reshape(-1, 24)]
 
 # Initialise agent
 #agents = SAC(env, env.observation_space.shape[0], env.action_space)
@@ -87,6 +112,13 @@ timer = time.time() - start_timer
 
 # In[ ]:
 ## POSTPROCESSING
+
+# Plot District level power consumption
+# for i in range(9):
+#     graph_total(env=env, RBC_env = RBC_env, agent=agents, parent_dir=final_dir, start_date = f'2017-0{i+1}-01', end_date = f'2017-0{i+1}-8')
+# for i in range(10,13):
+#     graph_total(env=env, RBC_env = RBC_env, agent=agents, parent_dir=final_dir, start_date = f'2017-{i}-01', end_date = f'2017-{i}-10')
+graph_total(env=env, RBC_env = RBC_env, agent=agents, parent_dir=final_dir, start_date = f'2017-12-01', end_date = f'2017-12-10')
 
 # Plotting winter operation
 interval = range(5000,5200)
