@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 import pandas as pd
 import numpy as np
 
-# RESULT TABLE METHODS
+#%% RESULT TABLE METHODS
 
 def append_dict_as_row(file_name, dict_of_elem, field_names):
 	# Open file in append mode
@@ -57,7 +57,7 @@ def tabulate_table(env, timer, algo, agent, climate_zone, building_ids, building
 
     append_dict_as_row('test_results.csv', run_results, field_names)
 
-# GRAPH RESULTS METHODS
+#%% GRAPH RESULTS METHODS
 
 # Graphing for District Behaviour
 def graph_total(env, RBC_env, agent, parent_dir, start_date, end_date, algo='SAC'):
@@ -172,7 +172,32 @@ def graph_total(env, RBC_env, agent, parent_dir, start_date, end_date, algo='SAC
     plt.savefig(parent_dir + r"district.jpg", bbox_inches='tight', dpi = 300)
     plt.close()
 
-# Graphing for Individual Buildings
+    # FOR CONFERENCE PAPER C5: Create plot showing electricity demand profile with RL agent, cooling storage behaviour and DHW storage behaviour
+    fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(16,3), squeeze = False, sharex = True)
+    output_filtered['Electricity demand with PV generation and without storage(kW)'].plot(ax = ax[0,0], color='green', ls = '--', label='Electricity demand with PV generation and without storage(kW)', linewidth=1, x_compat=True)
+    output_filtered['Electricity demand with PV generation and using {} for storage(kW)'.format(algo)].plot(ax = ax[0,0], color = 'red', ls = '-', label='Electricity demand with PV generation and using {} for storage(kW)'.format(algo), linewidth=2)
+    output_filtered['Electricity demand with PV generation and using RBC for storage(kW)'].plot(ax = ax[0,0], color = 'black', ls = '--', label='Electricity demand with PV generation and using RBC for storage(kW)', linewidth=2)
+    ax[0,0].set_title('District Electricity Demand')
+    ax[0,0].set(ylabel="Demand [kW]")
+    ax[0,0].set(ylim=((0,550)))
+    ax[0,0].legend(loc="upper right")
+    ax[0,0].xaxis.set_major_locator(dates.DayLocator())
+    ax[0,0].xaxis.set_major_formatter(dates.DateFormatter('\n%d/%m'))
+    ax[0,0].xaxis.set_minor_locator(dates.HourLocator(interval=6))
+    ax[0,0].xaxis.set_minor_formatter(dates.DateFormatter('%H'))
+    # Set minor grid lines
+    ax[0,0].xaxis.grid(False) # Just x
+    ax[0,0].yaxis.grid(False) # Just x
+    for xmin in ax[0,0].xaxis.get_majorticklocs():
+        ax[0,0].axvline(x=xmin, ls='-', color = 'lightgrey')
+    ax[0,0].tick_params(direction='out', length=6, width=2, colors='black', top=0, right=0)
+    plt.setp( ax[0,0].xaxis.get_minorticklabels(), rotation=0, ha="center" )
+    plt.setp( ax[0,0].xaxis.get_majorticklabels(), rotation=0, ha="center" )
+    # Export Figure
+    plt.savefig(parent_dir + r"district_demand.jpg", bbox_inches='tight', dpi = 300)
+    plt.close()
+
+#%% Graphing for Individual Buildings
 def graph_building(building_number, env, RBC_env, agent, parent_dir, start_date, end_date, action_index, algo='SAC'):
     # Convert output to dataframes for easy plotting
     time_periods = pd.date_range('2017-01-01 T01:00', '2017-12-31 T23:00', freq='1H')
